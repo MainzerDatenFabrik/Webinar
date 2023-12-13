@@ -1,0 +1,113 @@
+$ErrorActionPreference= 'silentlycontinue'
+# Function to Check Listener Status
+function Test-ListenerStatus {
+    param (
+        [string]$ListenerName
+    )
+
+    $result = Test-NetConnection -ComputerName $ListenerName -Port 1433
+    return $result.TcpTestSucceeded
+}
+$listenerName = "weblistnr"
+# Call the function and pass the listener name or IP address
+$status = Test-ListenerStatus -ListenerName $listenerName
+	
+
+# Function to Identify Primary Node
+function Get-PrimaryNode {
+    $availabilityGroupName = "webbierversand"
+    $clusterGroup = Get-ClusterGroup | Where-Object { $_.Name -eq $availabilityGroupName }
+	Write-Host "Primary node: $clusterGroup.OwnerNode"
+    return $clusterGroup.OwnerNode
+}
+
+function Get-PassiveNodes {
+    $availabilityGroupName = "webbierversand"
+    $passiveNodes = @()
+
+    # Get the cluster group associated with the Availability Group
+    $clusterGroup = Get-ClusterGroup | Where-Object { $_.Name -eq $availabilityGroupName }
+
+    if ($clusterGroup) {
+        # Find all nodes that are not the owner of the cluster group (passive nodes)
+        $passiveNodes = Get-ClusterNode | Where-Object { $_.Name -ne $clusterGroup.OwnerNode }
+    }
+
+    # Display the list of passive nodes
+    if ($passiveNodes.Count -gt 0) {
+        Write-Host "Passive nodes:"
+        foreach ($node in $passiveNodes) {
+            Write-Host "- $($node.Name)"
+        }
+    } else {
+        Write-Host "No passive nodes found."
+    }
+
+    return $passiveNodes
+}
+
+# Function to Verify Update Success
+function Test-SQLServerVersion {
+    param (
+        [string]$ComputerName
+    )
+    $query = "SELECT @@VERSION"
+    $result = Invoke-Sqlcmd -ServerInstance $ComputerName -Query $query
+    if ($result -match "SQL Server 2022") {
+	 Write-Host "SQL Server version 2022"
+        return $true
+    } else {
+	Write-Host "SQL Server version 2012"
+        return $false
+    }
+}
+
+
+
+# Main Script
+	Test-ListenerStatus
+	if ($status) {
+    Write-Host "Listener $listenerName is online and accessible."
+	}else {
+    Write-Host "Listener $listenerName is offline or not accessible."
+    # You can choose to exit or perform other actions here if the listener is not accessible.
+	}
+    # Identify Primary Node
+    $primaryNode = Get-PrimaryNode
+
+    # Identify Passive Nodes
+    $passiveNodes = Get-PassiveNodes
+	
+	# Check if current node is primary replica
+$primaryNode = Get-PrimaryNode -availabilityGroupName "webbierversand"
+$currentNode = $env:COMPUTERNAME
+if ($currentNode -eq $primaryNode) {
+    Write-Host "Current node is the primary replica."
+} else {
+    $passiveNodes = Get-PassiveNodes
+    if ($passiveNodes.Name -contains $currentNode) {
+        Write-Host "Current node is already included as a passive node."
+    } else {
+        Write-Host "Current node is not the primary replica and is not included as a passive node."
+    }
+}
+	
+	Test-SQLServerVersion
+	
+	# Check SQL Server version on passive nodes
+$passiveNodes = Get-PassiveNodes -availabilityGroupName "webbierversand"
+foreach ($node in $passiveNodes) {
+    if (Test-SQLServerVersion -ComputerName $node.Name) {
+        Write-Host "$($node.Name): SQL Server version is 2022, no upgrade needed"
+    } else {
+        Write-Host "$($node.Name): Upgrade needed"
+    }
+}
+
+if ($passiveNodes.Name -contains $currentNode) {
+        Write-Host "Current node is already included as a passive node."
+    cd F:\Media
+	Start-Sleep -s 5
+    F:\setup.exe /ConfigurationFile=C:\Automation\ConfigurationFile.ini /IAcceptSQLServerLicenseTerms /UpdateEnabled=True /UpdateSource="C:\Automation\Patch"
+		
+    }
